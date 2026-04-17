@@ -248,8 +248,12 @@ int index_add(Index *index, const char *path) {
         return -1;
     }
 
-    fread(data, 1, size, f);
+    if (fread(data, 1, size, f) != size) {
+    free(data);
     fclose(f);
+    return -1;
+    }
+    fclose(f);;
 
     ObjectID id;
     if (object_write(OBJ_BLOB, data, size, &id) != 0) {
@@ -262,8 +266,11 @@ int index_add(Index *index, const char *path) {
     IndexEntry *e = index_find(index, path);
 
     if (!e) {
-        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+        if (index->count >= MAX_INDEX_ENTRIES)
+            return -1;
+    
         e = &index->entries[index->count];
+        memset(e, 0, sizeof(IndexEntry));
         index->count++;
     }
 
@@ -271,7 +278,10 @@ int index_add(Index *index, const char *path) {
     strncpy(e->path, path, sizeof(e->path) - 1);
     e->path[sizeof(e->path) - 1] = '\0';
 
-    e->mode = st.st_mode;
+    if (st.st_mode & S_IXUSR)
+        e->mode = 0100755;
+    else
+        e->mode = 0100644;
     e->mtime_sec = st.st_mtime;
     e->size = st.st_size;
 
