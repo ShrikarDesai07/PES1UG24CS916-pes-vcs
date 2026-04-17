@@ -94,9 +94,47 @@ int object_exists(const ObjectID *id) {
 //
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
-    // TODO: Implement
-    (void)type; (void)data; (void)len; (void)id_out;
-    return -1;
+    // 1. Prepare the header (e.g., "blob 16\0")
+    char header[64];
+    const char *type_str = (type == OBJ_BLOB) ? "blob" : 
+                           (type == OBJ_TREE) ? "tree" : "commit";
+    int header_len = sprintf(header, "%s %zu", type_str, len) + 1; 
+
+    // 2. Combine header + data to compute the SHA-256 hash
+    size_t full_len = header_len + len;
+    uint8_t *full_obj = malloc(full_len);
+    if (!full_obj) return -1;
+    memcpy(full_obj, header, header_len);
+    memcpy(full_obj + header_len, data, len);
+    compute_hash(full_obj, full_len, id_out);
+
+    // 3. Check for deduplication
+    if (object_exists(id_out)) {
+        free(full_obj);
+        return 0;
+    }
+
+    // 4. Create the shard directory (first 2 hex chars)
+    char path[512], hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+    char shard_dir[512];
+    snprintf(shard_dir, sizeof(shard_dir), "%s/%.2s", OBJECTS_DIR, hex);
+    mkdir(shard_dir, 0755);
+
+    // 5. Atomic write: Write to .tmp then rename
+    object_path(id_out, path, sizeof(path));
+    char tmp_path[512];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    
+    int fd = open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) { free(full_obj); return -1; }
+    write(fd, full_obj, full_len);
+    fsync(fd);
+    close(fd);
+
+    rename(tmp_path, path);
+    free(full_obj);
+    return 0;
 }
 
 // Read an object from the store.
@@ -122,7 +160,39 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 // The caller is responsible for calling free(*data_out).
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
-    return -1;
+    char path[512];
+    object_path(id, path, sizeof(path));
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    fseek(f, 0, SEEK_END);
+    size_t file_size = ftell(f);
+    rewind(f);
+
+    uint8_t *buf = malloc(file_size);
+    fread(buf, 1, file_size, f);
+    fclose(f);
+
+    // Verify integrity by re-hashing
+    ObjectID actual_id;
+    compute_hash(buf, file_size, &actual_id);
+    if (memcmp(id->hash, actual_id.hash, HASH_SIZE) != 0) {
+        free(buf);
+        return -1;
+    }
+
+    // Parse header to find the null terminator
+    char *data_ptr = memchr((char *)buf, '\0', file_size);
+    size_t header_len = (data_ptr - (char *)buf) + 1;
+    
+    if (strncmp((char *)buf, "blob", 4) == 0) *type_out = OBJ_BLOB;
+    else if (strncmp((char *)buf, "tree", 4) == 0) *type_out = OBJ_TREE;
+    else *type_out = OBJ_COMMIT;
+
+    *len_out = file_size - header_len;
+    *data_out = malloc(*len_out);
+    memcpy(*data_out, data_ptr + 1, *len_out);
+
+    free(buf);
+    return 0;
 }
