@@ -28,7 +28,11 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 // Determine the object mode for a filesystem path.
 uint32_t get_file_mode(const char *path) {
     struct stat st;
+#ifdef _WIN32
+    if (stat(path, &st) != 0) return 0;
+#else
     if (lstat(path, &st) != 0) return 0;
+#endif
 
     if (S_ISDIR(st.st_mode))  return MODE_DIR;
     if (st.st_mode & S_IXUSR) return MODE_EXEC;

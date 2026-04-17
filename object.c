@@ -8,6 +8,7 @@
 // PROVIDED functions: compute_hash, object_path, object_exists, hash_to_hex, hex_to_hash
 // TODO functions:     object_write, object_read
 
+#include "compat.h"
 #include "pes.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,7 +126,7 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     hash_hex[64] = '\0';
 
     // directory
-    char dir[256];
+    char dir[512];
     snprintf(dir, sizeof(dir), ".pes/objects/%.2s", hash_hex);
 
     mkdir(".pes", 0755);
@@ -133,11 +134,11 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     mkdir(dir, 0755);
 
     // full path
-    char path[256];
-    snprintf(path, sizeof(path), "%s/%s", dir, hash_hex + 2);
+    char path[512];
+    snprintf(path, sizeof(path), ".pes/objects/%.2s/%s", hash_hex, hash_hex + 2);
 
     // temp file
-    char tmp[300];
+    char tmp[600];
     snprintf(tmp, sizeof(tmp), "%s.tmpXXXXXX", path);
 
     int fd = mkstemp(tmp);

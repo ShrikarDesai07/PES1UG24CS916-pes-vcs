@@ -7,6 +7,7 @@
 #ifndef INDEX_H
 #define INDEX_H
 
+#include "compat.h"
 #include "pes.h"
 
 #define MAX_INDEX_ENTRIES 10000
@@ -20,8 +21,9 @@ typedef struct {
 } IndexEntry;
 
 typedef struct {
-    IndexEntry entries[MAX_INDEX_ENTRIES];
-    int count;
+    IndexEntry *entries;    // Heap-allocated array of entries
+    int count;              // Number of valid entries
+    int capacity;           // Allocated capacity (in entries)
 } Index;
 
 // Load the index from .pes/index into memory.

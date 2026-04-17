@@ -126,14 +126,21 @@ int index_status(const Index *index) {
 
 // Load the index from .pes/index.
 int index_load(Index *index) {
-    // CRITICAL: Initialize count to 0 to avoid segmentation faults
+    // Initialize to a known empty state.
+    index->entries = NULL;
     index->count = 0;
+    index->capacity = MAX_INDEX_ENTRIES;
+
+    // Allocate the entries array on the heap to avoid stack overflow on Windows.
+    index->entries = calloc((size_t)index->capacity, sizeof(IndexEntry));
+    if (!index->entries) return -1;
+
     FILE *f = fopen(INDEX_FILE, "r");
     if (!f) return 0; // Not an error; repo is just empty
 
     char hash_hex[HASH_HEX_SIZE + 1];
     // Read the space-separated fields: <mode> <hash> <mtime> <size> <path>
-    while (index->count < MAX_INDEX_ENTRIES && 
+    while (index->count < index->capacity && 
            fscanf(f, "%o %64s %" SCNu64 " %u %511s\n", 
                   &index->entries[index->count].mode, 
                   hash_hex, 
@@ -151,29 +158,41 @@ int index_load(Index *index) {
 
 // Save the index to .pes/index atomically using temp-file and rename pattern.
 int index_save(const Index *index) {
-    // Sort entries alphabetically before saving to ensure consistency
-    Index temp = *index;
-    qsort(temp.entries, temp.count, sizeof(IndexEntry), compare_index);
+    // Sort entries alphabetically before saving to ensure consistency.
+    // Keep the in-memory order unchanged by sorting a temporary copy.
+    IndexEntry *sorted = NULL;
+    if (index->count > 0) {
+        sorted = malloc((size_t)index->count * sizeof(IndexEntry));
+        if (!sorted) return -1;
+        memcpy(sorted, index->entries, (size_t)index->count * sizeof(IndexEntry));
+        qsort(sorted, index->count, sizeof(IndexEntry), compare_index);
+    }
 
     char tmp_path[512];
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", INDEX_FILE);
     FILE *f = fopen(tmp_path, "w");
-    if (!f) return -1;
+    if (!f) {
+        free(sorted);
+        return -1;
+    }
 
-    for (int i = 0; i < temp.count; i++) {
+    const IndexEntry *to_write = sorted ? sorted : index->entries;
+    for (int i = 0; i < index->count; i++) {
         char hex[HASH_HEX_SIZE + 1];
-        hash_to_hex(&temp.entries[i].hash, hex);
+        hash_to_hex(&to_write[i].hash, hex);
         fprintf(f, "%o %s %" PRIu64 " %u %s\n", 
-                temp.entries[i].mode, hex, 
-                temp.entries[i].mtime_sec, 
-                temp.entries[i].size, 
-                temp.entries[i].path);
+                to_write[i].mode, hex, 
+                to_write[i].mtime_sec, 
+                to_write[i].size, 
+                to_write[i].path);
     }
 
     // Atomic write pattern: flush, sync to disk, then rename
     fflush(f);
     fsync(fileno(f));
     fclose(f);
+
+    free(sorted);
 
     return rename(tmp_path, INDEX_FILE);
 }
@@ -205,7 +224,7 @@ int index_add(Index *index, const char *path) {
     // 3. Check if the file is already staged
     IndexEntry *e = index_find(index, path);
     if (!e) {
-        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+        if (index->count >= index->capacity) return -1;
         e = &index->entries[index->count++];
         strncpy(e->path, path, sizeof(e->path) - 1);
         e->path[sizeof(e->path) - 1] = '\0';
