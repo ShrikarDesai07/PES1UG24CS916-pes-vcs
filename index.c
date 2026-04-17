@@ -139,31 +139,21 @@ int index_status(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_load(Index *index) {
-    // TODO: Implement index loading
-    // (See Lab Appendix for logical steps)
     index->count = 0;
+    FILE *f = fopen(INDEX_FILE, "r"); // Use the INDEX_FILE constant
+    if (!f) return 0; // Not an error if the index doesn't exist yet
 
-    FILE *f = fopen(".pes/index", "r");
-    if (!f) return 0;
-
-    while (index->count < MAX_INDEX_ENTRIES) {
+    char line[1024];
+    while (fgets(line, sizeof(line), f) && index->count < MAX_INDEX_ENTRIES) {
         IndexEntry *e = &index->entries[index->count];
-        char hash_hex[65];
+        char hash_hex[HASH_HEX_SIZE + 1];
 
-        int ret = fscanf(f, "%o %64s %lu %u %[^\n]\n",
-                         &e->mode,
-                         hash_hex,
-                         &e->mtime_sec,
-                         &e->size,
-                         e->path);
-
-        if (ret != 5) break;
-
-        for (int i = 0; i < 32; i++) {
-            sscanf(hash_hex + i * 2, "%2hhx", &e->hash.hash[i]);
+        // Format: <mode> <hash> <mtime> <size> <path>
+        if (sscanf(line, "%o %64s %lu %u %[^\n]", 
+                   &e->mode, hash_hex, &e->mtime_sec, &e->size, e->path) == 5) {
+            hex_to_hash(hash_hex, &e->hash); // Use provided helper
+            index->count++;
         }
-
-        index->count++;
     }
 
     fclose(f);
@@ -182,10 +172,8 @@ int index_load(Index *index) {
 // Returns 0 on success, -1 on error.
 
 int index_save(const Index *index) {
-    // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
+    // Sort entries by path before writing
     Index temp = *index;
-
     qsort(temp.entries, temp.count, sizeof(IndexEntry), compare_index);
 
     FILE *f = fopen(".pes/index.tmp", "w");
@@ -193,28 +181,19 @@ int index_save(const Index *index) {
 
     for (int i = 0; i < temp.count; i++) {
         IndexEntry *e = &temp.entries[i];
+        char hex[HASH_HEX_SIZE + 1];
+        hash_to_hex(&e->hash, hex); // Use provided helper
 
-        char hash_hex[65];
-        for (int j = 0; j < 32; j++) {
-            snprintf(hash_hex + j * 2, 3, "%02x", e->hash.hash[j]);
-        }
-        hash_hex[64] = '\0';
-
-        fprintf(f, "%o %s %lu %u %s\n",
-                e->mode,
-                hash_hex,
-                e->mtime_sec,
-                e->size,
-                e->path);
+        fprintf(f, "%o %s %lu %u %s\n", 
+                e->mode, hex, e->mtime_sec, e->size, e->path);
     }
 
+    // Atomic write pattern: flush, sync, close, rename
     fflush(f);
     fsync(fileno(f));
     fclose(f);
 
-    rename(".pes/index.tmp", ".pes/index");
-
-    return 0;
+    return rename(".pes/index.tmp", INDEX_FILE);
 }
 
 // Stage a file for the next commit.
