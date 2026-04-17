@@ -179,11 +179,13 @@ int index_save(const Index *index) {
 }
 
 // Stage a file: store as blob, update index entry with metadata.
+// Stage a file: store as blob, update index entry with metadata.
 int index_add(Index *index, const char *path) {
     struct stat st;
+    // Get file metadata (size, mtime, mode)
     if (stat(path, &st) != 0) return -1;
 
-    // 1. Read file and store content as a OBJ_BLOB
+    // 1. Read the target file's contents
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
     
@@ -192,6 +194,29 @@ int index_add(Index *index, const char *path) {
     fread(data, 1, st.st_size, f);
     fclose(f);
 
+    // 2. Write the contents as a blob to the object store
     ObjectID blob_id;
     if (object_write(OBJ_BLOB, data, st.st_size, &blob_id) != 0) {
         free(data);
+        return -1;
+    }
+    free(data);
+
+    // 3. Check if the file is already staged
+    IndexEntry *e = index_find(index, path);
+    if (!e) {
+        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+        e = &index->entries[index->count++];
+        strncpy(e->path, path, sizeof(e->path) - 1);
+        e->path[sizeof(e->path) - 1] = '\0';
+    }
+
+    // 4. Update index entry with new metadata and hash
+    e->mode = st.st_mode;
+    e->mtime_sec = (uint64_t)st.st_mtime;
+    e->size = (uint32_t)st.st_size;
+    memcpy(e->hash.hash, blob_id.hash, HASH_SIZE);
+
+    // 5. Save the updated index atomically
+    return index_save(index);
+} // Ensure this closing brace is present
