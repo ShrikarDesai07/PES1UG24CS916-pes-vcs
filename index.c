@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
 
 static int compare_index(const void *a, const void *b) {
     return strcmp(((IndexEntry*)a)->path, ((IndexEntry*)b)->path);
